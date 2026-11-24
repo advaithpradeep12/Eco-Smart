@@ -1,20 +1,18 @@
+
 const http = require("http");
-const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
 const PORT = process.env.PORT || 3000;
-
 const ROBOFLOW_API_KEY = process.env.ROBOFLOW_API_KEY;
 const STAFF_REVIEW_PASSWORD = process.env.STAFF_REVIEW_PASSWORD;
 
 const WORKFLOW_URL =
   "https://serverless.roboflow.com/advaiths-workspace-wvko1/workflows/full-body-uniform-check-1795538335596";
 
-const REVIEW_STORE_PATH =
-  process.env.REVIEW_STORE_PATH ||
-  path.join(__dirname, "data", "reviews.json");
+// Temporary storage: reviews disappear when the server restarts.
+const reviews = [];
 
 const sessions = new Map();
 const loginAttempts = new Map();
@@ -66,6 +64,7 @@ function getCookie(req, name) {
 
   for (const cookie of cookies) {
     const parts = cookie.trim().split("=");
+
     if (parts[0] === name) {
       return parts.slice(1).join("=");
     }
@@ -76,6 +75,7 @@ function getCookie(req, name) {
 
 function isAuthenticated(req) {
   const token = getCookie(req, "staff_session");
+
   if (!token) return false;
 
   const expiry = sessions.get(token);
@@ -104,32 +104,6 @@ function safeCompare(a, b) {
   if (first.length !== second.length) return false;
 
   return crypto.timingSafeEqual(first, second);
-}
-
-function loadReviews() {
-  try {
-    if (!fs.existsSync(REVIEW_STORE_PATH)) return [];
-    const data = JSON.parse(fs.readFileSync(REVIEW_STORE_PATH, "utf8"));
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveReviews(reviews) {
-  const directory = path.dirname(REVIEW_STORE_PATH);
-
-  fs.mkdirSync(directory, { recursive: true });
-
-  const temporaryFile = REVIEW_STORE_PATH + ".tmp";
-
-  fs.writeFileSync(
-    temporaryFile,
-    JSON.stringify(reviews, null, 2),
-    "utf8"
-  );
-
-  fs.renameSync(temporaryFile, REVIEW_STORE_PATH);
 }
 
 function getImage(body) {
@@ -169,12 +143,12 @@ async function handleRequest(req, res) {
     return serveFile(res, "index.html", "text/html; charset=utf-8");
   }
 
-  // Staff review page
+  // Staff page
   if (req.method === "GET" && pathname === "/staff") {
     return serveFile(res, "staff.html", "text/html; charset=utf-8");
   }
 
-  // Roboflow workflow proxy
+  // Roboflow workflow
   if (req.method === "POST" && pathname === "/api/uniform-check") {
     if (!ROBOFLOW_API_KEY) {
       return send(res, 500, {
@@ -188,7 +162,7 @@ async function handleRequest(req, res) {
       const workflowUrl = new URL(WORKFLOW_URL);
       workflowUrl.searchParams.set("api_key", ROBOFLOW_API_KEY);
 
-      const workflowResponse = await fetch(workflowUrl, {
+      const response = await fetch(workflowUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -196,16 +170,16 @@ async function handleRequest(req, res) {
         body: JSON.stringify(body)
       });
 
-      const resultText = await workflowResponse.text();
+      const result = await response.text();
 
-      res.writeHead(workflowResponse.status, {
+      res.writeHead(response.status, {
         "Content-Type": "application/json",
         "Cache-Control": "no-store"
       });
 
-      return res.end(resultText);
+      return res.end(result);
     } catch (error) {
-      console.error("Workflow request failed:", error.message);
+      console.error("Workflow error:", error.message);
 
       return send(res, 500, {
         error: "Uniform checking is temporarily unavailable"
@@ -283,7 +257,7 @@ async function handleRequest(req, res) {
     });
   }
 
-  // Staff logout
+  // Logout
   if (req.method === "POST" && pathname === "/api/staff/logout") {
     const token = getCookie(req, "staff_session");
 
@@ -300,16 +274,14 @@ async function handleRequest(req, res) {
     );
   }
 
-  // Get staff review queue
+  // Get review queue
   if (req.method === "GET" && pathname === "/api/staff/reviews") {
     if (!requireStaff(req, res)) return;
 
-    return send(res, 200, {
-      reviews: loadReviews()
-    });
+    return send(res, 200, { reviews });
   }
 
-  // Add a new review
+  // Submit a review
   if (req.method === "POST" && pathname === "/api/staff/reviews") {
     try {
       const body = await readBody(req);
@@ -320,8 +292,6 @@ async function handleRequest(req, res) {
           error: "A review image is required"
         });
       }
-
-      const reviews = loadReviews();
 
       const review = {
         id: crypto.randomUUID(),
@@ -334,14 +304,16 @@ async function handleRequest(req, res) {
 
       reviews.unshift(review);
 
-      saveReviews(reviews.slice(0, MAX_REVIEWS));
+      if (reviews.length > MAX_REVIEWS) {
+        reviews.length = MAX_REVIEWS;
+      }
 
       return send(res, 201, {
         ok: true,
         id: review.id
       });
     } catch (error) {
-      console.error("Could not save review:", error.message);
+      console.error("Review error:", error.message);
 
       return send(res, 500, {
         error: "Could not save the review"
@@ -349,7 +321,7 @@ async function handleRequest(req, res) {
     }
   }
 
-  // Update or delete a review
+  // Update or delete review
   if (
     pathname.startsWith("/api/staff/reviews/") &&
     (req.method === "PATCH" || req.method === "DELETE")
@@ -360,17 +332,16 @@ async function handleRequest(req, res) {
       pathname.substring("/api/staff/reviews/".length)
     );
 
-    const reviews = loadReviews();
     const index = reviews.findIndex(review => review.id === id);
 
     if (index === -1) {
-      return send(res, 404, { error: "Review not found" });
+      return send(res, 404, {
+        error: "Review not found"
+      });
     }
 
     if (req.method === "DELETE") {
       reviews.splice(index, 1);
-      saveReviews(reviews);
-
       return send(res, 200, { ok: true });
     }
 
@@ -381,18 +352,20 @@ async function handleRequest(req, res) {
         reviews[index].reviewed = body.reviewed;
       }
 
-      saveReviews(reviews);
-
       return send(res, 200, {
         ok: true,
         review: reviews[index]
       });
     } catch {
-      return send(res, 400, { error: "Invalid request" });
+      return send(res, 400, {
+        error: "Invalid request"
+      });
     }
   }
 
-  return send(res, 404, { error: "Not found" });
+  return send(res, 404, {
+    error: "Not found"
+  });
 }
 
 const server = http.createServer((req, res) => {
@@ -400,7 +373,9 @@ const server = http.createServer((req, res) => {
     console.error("Server error:", error.message);
 
     if (!res.headersSent) {
-      send(res, 500, { error: "Internal server error" });
+      send(res, 500, {
+        error: "Internal server error"
+      });
     }
   });
 });
