@@ -305,7 +305,7 @@
      </section>
      <section id="uniform" class="view space-y-5" hidden="" aria-labelledby="uniform-title">
       <h1 id="uniform-title" data-template-id="uniform-title-text" class="canva-text section-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 30px;">AI Uniform Checker</h1>
-      <p class="notice">Automated uniform screening checks tie, waistcoat, and shoes separately using torso and lower-body image regions. Staff review every result before action. Faces are excluded from the review crop.</p>
+      <p class="notice">The live checker looks for three required items: shirt, tie, and vest. If any item is not detected, one frame is sent to the password-protected staff review page. Staff must verify every alert.</p>
       <div class="grid lg:grid-cols-2 gap-4">
        <article class="panel p-5">
         <h2 data-template-id="uniform-image-title" class="canva-text card-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 23px;">Image preview</h2>
@@ -316,19 +316,19 @@
         <div class="flex flex-wrap gap-2 mt-4">
          <button data-template-id="camera-start" id="camera-start" type="button" class="canva-button btn primary" style="background: rgb(24, 91, 71); color: rgb(255, 255, 255); font-weight: 700; font-style: normal; font-size: 15px;">Start Camera</button><button data-template-id="camera-stop" id="camera-stop" type="button" class="canva-button btn secondary" style="background: rgb(245, 250, 244); color: rgb(24, 91, 71); font-weight: 700; font-style: normal; font-size: 15px;">Stop Camera</button><button data-template-id="camera-capture" id="camera-capture" type="button" class="canva-button btn secondary" style="background: rgb(245, 250, 244); color: rgb(24, 91, 71); font-weight: 700; font-style: normal; font-size: 15px;">Capture Image</button><button data-template-id="uniform-delete" id="uniform-delete" type="button" class="canva-button btn secondary" style="background: rgb(245, 250, 244); color: rgb(24, 91, 71); font-weight: 700; font-style: normal; font-size: 15px;">Delete image</button>
         </div><label class="label mt-4" for="uniform-upload">Upload Image · maximum 5 MB</label><input class="field" id="uniform-upload" type="file" accept="image/*">
-        <p id="camera-status" class="text-sm muted mt-3" role="status">Camera permission is requested only after Start Camera. Live checks run automatically while the camera is active.</p>
+        <p id="camera-status" class="text-sm muted mt-3" role="status">Camera permission is requested only after Start Camera. Uniform checks run automatically while the camera is active.</p>
        </article>
        <article class="panel p-5">
         <h2 data-template-id="uniform-review-title" class="canva-text card-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 23px;">AI uniform analysis</h2>
-        <p class="text-sm muted mb-4">Upload or capture an image to check the uniform. When the camera is active, the system also checks frames automatically. Each completed check is added to the staff review queue so staff can confirm the result.</p>
-        <div id="uniform-result" class="mt-4 p-4 rounded-xl bg-[#edf4e9] text-sm" role="status" aria-live="polite" style="white-space:pre-line">Start the camera or upload an image. Uniform analysis will begin automatically.</div>
-        <p class="notice mt-4 text-sm">AI results are recommendations for staff review, not final decisions. Staff should check the uniform requirements and confirm any reported issue before taking action.</p>
+        <p class="text-sm muted mb-4">The camera checks the uniform while it is running. Shirt, tie, and vest must all be detected for the uniform to pass. Incorrect or uncertain results are sent for staff review.</p>
+        <div id="uniform-result" class="mt-4 p-4 rounded-xl bg-[#edf4e9] text-sm" role="status" aria-live="polite" style="white-space:pre-line">Start the camera or upload an image to begin the uniform check.</div>
+        <p class="notice mt-4 text-sm">Automated checks can make mistakes. Staff must verify every reported issue before taking action.</p>
        </article>
       </div>
       <article class="panel p-5">
-       <h2 data-template-id="queue-title" class="canva-text card-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 23px;">Staff review queue · all completed checks</h2>
-       <div id="review-list" class="space-y-2"></div>
-       <p id="review-empty" class="text-sm muted">No completed uniform checks are waiting for staff review.</p>
+       <h2 class="card-title">Staff review</h2>
+       <p class="text-sm muted">Incorrect-uniform frames are sent to the secure staff review area.</p>
+       <a class="btn secondary inline-flex items-center mt-3" href="/staff" target="_blank" rel="noopener">Open staff review page</a>
       </article>
      </section>
      <section id="teacher" class="view space-y-5" hidden="" aria-labelledby="teacher-title">
@@ -644,7 +644,7 @@
       if(!navigator.mediaDevices?.getUserMedia)throw Error('Unavailable');
       state.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
       const video=$('camera-video');video.srcObject=state.stream;video.classList.remove('hidden');$('uniform-placeholder').classList.add('hidden');
-      $('camera-status').textContent='Live camera active · automatic uniform checks every 8 seconds.';
+      $('camera-status').textContent='Live camera active · checking uniform every 8 seconds.';
       state.uniformScanTimer=setInterval(async()=>{
         if(!state.stream||state.uniformAnalyzing||!video.videoWidth||Date.now()-state.lastUniformScan<7500)return;
         const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);
@@ -669,113 +669,127 @@
       row.append(info,del);host.append(row);
     });
   }
-  // Roboflow Uniform Checker
-  // The API key is kept in the local Node.js backend, not in this HTML file.
+  // Uniform checker: only the three required clothing items count as compliant.
   const UNIFORM_CHECK_ENDPOINT = "/api/uniform-check";
+  let lastLiveAlertKey = "";
 
-  async function imageInputForRoboflow(source) {
-    // The workflow's URL input requires a URL that Roboflow can access.
-    // Uploaded files and camera frames are local blob/data URLs, so send those as base64.
-    if (/^https?:\/\//i.test(source)) {
-      return { type: "url", value: source };
-    }
-
+  async function imageInputForCheck(source) {
+    if (/^https?:\/\//i.test(source)) return { type: "url", value: source };
     let blob;
-    if (source.startsWith("data:")) {
-      blob = dataURLBlob(source);
-    } else {
+    if (source.startsWith("data:")) blob = dataURLBlob(source);
+    else {
       const response = await fetch(source);
       if (!response.ok) throw new Error("Could not read the selected image.");
       blob = await response.blob();
     }
-
     const base64 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => {
-        const value = String(reader.result || "");
-        resolve(value.substring(value.indexOf(",") + 1));
-      };
-      reader.onerror = () => reject(new Error("Could not prepare the image for Roboflow."));
+      reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+      reader.onerror = () => reject(new Error("Could not prepare the image."));
       reader.readAsDataURL(blob);
     });
     return { type: "base64", value: base64 };
   }
 
-  function summarizeRoboflowResult(result) {
-    // Workflows can return different output shapes depending on their configured blocks.
-    const parts = [];
-    const walk = (value, path = "") => {
-      if (value == null) return;
-      if (Array.isArray(value)) {
-        value.forEach((item, index) => walk(item, path ? `${path}[${index}]` : `[${index}]`));
-        return;
-      }
-      if (typeof value === "object") {
-        for (const [key, child] of Object.entries(value)) {
-          const next = path ? `${path}.${key}` : key;
-          if (["predictions", "top", "class", "class_name", "label", "confidence", "predicted_classes"].includes(key.toLowerCase())) {
-            if (typeof child !== "object") parts.push(`${next}: ${String(child)}`);
-            else walk(child, next);
-          } else if (typeof child === "object") {
-            walk(child, next);
-          }
-        }
-        return;
-      }
-      if (/(class|label|confidence|prediction|result|output|status)/i.test(path)) {
-        parts.push(`${path}: ${String(value)}`);
+  function collectDetectedLabels(result) {
+    const labels = [];
+    const addItem = item => {
+      if (typeof item === "string") { labels.push(item); return; }
+      if (!item || typeof item !== "object") return;
+      for (const key of ["class", "class_name", "label", "name", "item", "category"]) {
+        if (typeof item[key] === "string") labels.push(item[key]);
       }
     };
+    const walk = (value, key = "") => {
+      if (!value || typeof value !== "object") return;
+      if (key.toLowerCase() === "detected_items") {
+        if (Array.isArray(value)) value.forEach(addItem); else addItem(value);
+        return;
+      }
+      if (Array.isArray(value)) { value.forEach(v => walk(v, key)); return; }
+      for (const [childKey, child] of Object.entries(value)) walk(child, childKey);
+    };
     walk(result);
-    return [...new Set(parts)].slice(0, 24);
+    return [...new Set(labels.map(x => x.toLowerCase().trim()).filter(Boolean))];
+  }
+
+  function classifyUniform(result) {
+    const labels = collectDetectedLabels(result);
+    const positive = labels.filter(label => !/(missing|absent|not[_ -]?wearing|no[_ -]?)/i.test(label));
+    const has = pattern => positive.some(label => pattern.test(label));
+    const present = {
+      shirt: has(/\bshirt\b|\bblouse\b/),
+      tie: has(/\btie\b|\bnecktie\b/),
+      vest: has(/\bvest\b|\bwaistcoat\b/)
+    };
+    const missing = Object.keys(present).filter(item => !present[item]);
+    return { labels, present, missing, correct: missing.length === 0 };
+  }
+
+  async function sourceAsDataUrl(source) {
+    if (source.startsWith("data:image/")) return source;
+    const response = await fetch(source);
+    if (!response.ok) throw new Error("Could not prepare the review image.");
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Could not prepare the review image."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function sendStaffReview(frameSource, missingItems, labels) {
+    const image = await sourceAsDataUrl(frameSource);
+    const response = await fetch("/api/staff/reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image, missingItems, detectedItems: labels })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Could not send the frame to staff.");
+    return data;
   }
 
   async function analyzeUniform(source, opts = {}) {
     if (!source || state.uniformAnalyzing) return;
     state.uniformAnalyzing = true;
     try {
-      $('uniform-result').textContent = 'Sending image to the Roboflow uniform-checking workflow…';
-
-      const image = await imageInputForRoboflow(source);
+      $('uniform-result').textContent = 'Fetching data…';
+      const image = await imageInputForCheck(source);
       const response = await fetch(UNIFORM_CHECK_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inputs: { image } })
       });
-
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = result?.message || result?.error || `Roboflow request failed (${response.status}).`;
-        throw new Error(detail);
-      }
+      if (!response.ok) throw new Error('The uniform check could not be completed. Please try again.');
 
-      const summary = summarizeRoboflowResult(result);
-      const rawText = JSON.stringify(result, null, 2);
-      const readable = summary.length ? summary.join('\n') : rawText.slice(0, 3500);
-      $('uniform-result').textContent =
-        `Roboflow workflow response:\n${readable}\n\nPlease have a staff member verify the result before taking action.`;
-
-      // Store review metadata only; do not retain the uploaded student image in this queue.
-      const isIncorrect = /incorrect|missing|not[_ -]?wearing|non[_ -]?compliant/i.test(rawText);
-      if (isIncorrect) {
+      const verdict = classifyUniform(result);
+      if (verdict.correct) {
+        $('uniform-result').textContent = 'Correct uniform — have a nice day!';
+        $('camera-status').textContent = opts.live ? 'Uniform check complete.' : 'Uniform check complete.';
+        lastLiveAlertKey = '';
+      } else {
+        const missingText = verdict.missing.map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(', ');
+        if (!opts.live || !lastLiveAlertKey) {
+          try {
+            await sendStaffReview(source, verdict.missing, verdict.labels);
+            $('uniform-result').textContent = `Incorrect uniform — missing: ${missingText}. One frame has been sent to staff for checking.`;
+            $('camera-status').textContent = 'Incorrect uniform detected. One frame sent for staff review.';
+            if (opts.live) lastLiveAlertKey = 'sent';
+          } catch (queueError) {
+            $('uniform-result').textContent = `Incorrect uniform — missing: ${missingText}. The frame could not be sent to staff. Please contact the site administrator.`;
+            $('camera-status').textContent = 'Staff review submission failed.';
+          }
+        } else {
+          $('uniform-result').textContent = `Incorrect uniform — missing: ${missingText}. This issue has already been sent to staff.`;
+        }
         state.uniformWrong++;
         if ($('dash-uniform-stat')) $('dash-uniform-stat').textContent = `${state.uniformWrong} incorrect`;
       }
-      state.reviews.unshift({
-        id: Math.random().toString(36).slice(2),
-        time: new Date(),
-        outcome: isIncorrect ? 'Possible uniform issue flagged · staff review required' : 'Check completed · staff review required',
-        source: opts.live ? 'Automatic live-camera scan' : 'Uploaded/captured image'
-      });
-      state.reviews = state.reviews.slice(0, 30);
-      renderReviews();
-      $('camera-status').textContent = opts.live
-        ? 'Live Roboflow check complete · added to staff review queue.'
-        : 'Roboflow check complete · added to staff review queue.';
     } catch (error) {
-      console.error('Roboflow uniform check error:', error);
-      $('uniform-result').textContent = `Uniform check could not run: ${error.message || 'Unknown error'}\nCheck the API key, internet connection, and Roboflow workflow configuration, then try again.`;
-      $('camera-status').textContent = 'Roboflow uniform check failed. See the analysis message for details.';
+      $('uniform-result').textContent = 'The uniform check could not be completed. Please check the connection and try again.';
+      $('camera-status').textContent = 'Unable to complete the uniform check.';
     } finally {
       state.uniformAnalyzing = false;
     }
