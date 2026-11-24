@@ -27,6 +27,7 @@ function send(res, status, data, headers = {}) {
     "Cache-Control": "no-store",
     ...headers
   });
+
   res.end(JSON.stringify(data));
 }
 
@@ -90,7 +91,10 @@ function isAuthenticated(req) {
 
 function requireStaff(req, res) {
   if (!isAuthenticated(req)) {
-    send(res, 401, { error: "Staff login required" });
+    send(res, 401, {
+      error: "Staff login required"
+    });
+
     return false;
   }
 
@@ -140,29 +144,40 @@ async function handleRequest(req, res) {
 
   // Main website
   if (req.method === "GET" && pathname === "/") {
-    return serveFile(res, "index.html", "text/html; charset=utf-8");
+    return serveFile(
+      res,
+      "index.html",
+      "text/html; charset=utf-8"
+    );
   }
 
   // Staff page
   if (req.method === "GET" && pathname === "/staff") {
-    return serveFile(res, "staff.html", "text/html; charset=utf-8");
+    return serveFile(
+      res,
+      "staff.html",
+      "text/html; charset=utf-8"
+    );
   }
 
   // Roboflow workflow
-  if (req.method === "POST" && pathname === "/api/uniform-check") {
+  if (
+    req.method === "POST" &&
+    pathname === "/api/uniform-check"
+  ) {
     if (!ROBOFLOW_API_KEY) {
       return send(res, 500, {
-        error: "Server workflow configuration is missing"
+        error: "ROBOFLOW_API_KEY is missing from Render environment variables"
       });
     }
 
     try {
       const body = await readBody(req);
 
-      const workflowUrl = new URL(WORKFLOW_URL);
-      workflowUrl.searchParams.set("api_key", ROBOFLOW_API_KEY);
+      // Send the API key in the workflow JSON body.
+      body.api_key = ROBOFLOW_API_KEY;
 
-      const response = await fetch(workflowUrl, {
+      const response = await fetch(WORKFLOW_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -172,23 +187,38 @@ async function handleRequest(req, res) {
 
       const result = await response.text();
 
+      console.log(
+        "Roboflow response status:",
+        response.status
+      );
+
+      // Forward Roboflow's response to the website.
       res.writeHead(response.status, {
-        "Content-Type": "application/json",
+        "Content-Type":
+          response.headers.get("content-type") ||
+          "application/json",
         "Cache-Control": "no-store"
       });
 
       return res.end(result);
+
     } catch (error) {
-      console.error("Workflow error:", error.message);
+      console.error(
+        "Roboflow workflow error:",
+        error.message
+      );
 
       return send(res, 500, {
-        error: "Uniform checking is temporarily unavailable"
+        error: "Could not connect to the uniform checking service"
       });
     }
   }
 
   // Staff login
-  if (req.method === "POST" && pathname === "/api/staff/login") {
+  if (
+    req.method === "POST" &&
+    pathname === "/api/staff/login"
+  ) {
     if (!STAFF_REVIEW_PASSWORD) {
       return send(res, 500, {
         error: "Staff password has not been configured"
@@ -207,7 +237,12 @@ async function handleRequest(req, res) {
     try {
       const body = await readBody(req);
 
-      if (!safeCompare(body.password || "", STAFF_REVIEW_PASSWORD)) {
+      if (
+        !safeCompare(
+          body.password || "",
+          STAFF_REVIEW_PASSWORD
+        )
+      ) {
         const current = loginAttempts.get(ip) || {
           count: 0,
           blockedUntil: 0
@@ -216,7 +251,9 @@ async function handleRequest(req, res) {
         current.count++;
 
         if (current.count >= 8) {
-          current.blockedUntil = Date.now() + 5 * 60 * 1000;
+          current.blockedUntil =
+            Date.now() + 5 * 60 * 1000;
+
           current.count = 0;
         }
 
@@ -231,10 +268,15 @@ async function handleRequest(req, res) {
 
       const token = crypto.randomBytes(32).toString("hex");
 
-      sessions.set(token, Date.now() + SESSION_DURATION);
+      sessions.set(
+        token,
+        Date.now() + SESSION_DURATION
+      );
 
       const secure =
-        process.env.NODE_ENV === "production" ? "; Secure" : "";
+        process.env.NODE_ENV === "production"
+          ? "; Secure"
+          : "";
 
       return send(
         res,
@@ -245,23 +287,34 @@ async function handleRequest(req, res) {
             `staff_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION / 1000}${secure}`
         }
       );
+
     } catch {
-      return send(res, 400, { error: "Invalid request" });
+      return send(res, 400, {
+        error: "Invalid request"
+      });
     }
   }
 
   // Check staff session
-  if (req.method === "GET" && pathname === "/api/staff/session") {
+  if (
+    req.method === "GET" &&
+    pathname === "/api/staff/session"
+  ) {
     return send(res, 200, {
       authenticated: isAuthenticated(req)
     });
   }
 
   // Logout
-  if (req.method === "POST" && pathname === "/api/staff/logout") {
+  if (
+    req.method === "POST" &&
+    pathname === "/api/staff/logout"
+  ) {
     const token = getCookie(req, "staff_session");
 
-    if (token) sessions.delete(token);
+    if (token) {
+      sessions.delete(token);
+    }
 
     return send(
       res,
@@ -275,14 +328,20 @@ async function handleRequest(req, res) {
   }
 
   // Get review queue
-  if (req.method === "GET" && pathname === "/api/staff/reviews") {
+  if (
+    req.method === "GET" &&
+    pathname === "/api/staff/reviews"
+  ) {
     if (!requireStaff(req, res)) return;
 
     return send(res, 200, { reviews });
   }
 
   // Submit a review
-  if (req.method === "POST" && pathname === "/api/staff/reviews") {
+  if (
+    req.method === "POST" &&
+    pathname === "/api/staff/reviews"
+  ) {
     try {
       const body = await readBody(req);
       const image = getImage(body);
@@ -296,8 +355,10 @@ async function handleRequest(req, res) {
       const review = {
         id: crypto.randomUUID(),
         image,
-        missingItems: body.missingItems || body.missing || [],
-        detectedItems: body.detectedItems || body.detected || [],
+        missingItems:
+          body.missingItems || body.missing || [],
+        detectedItems:
+          body.detectedItems || body.detected || [],
         createdAt: new Date().toISOString(),
         reviewed: false
       };
@@ -312,6 +373,7 @@ async function handleRequest(req, res) {
         ok: true,
         id: review.id
       });
+
     } catch (error) {
       console.error("Review error:", error.message);
 
@@ -324,15 +386,22 @@ async function handleRequest(req, res) {
   // Update or delete review
   if (
     pathname.startsWith("/api/staff/reviews/") &&
-    (req.method === "PATCH" || req.method === "DELETE")
+    (
+      req.method === "PATCH" ||
+      req.method === "DELETE"
+    )
   ) {
     if (!requireStaff(req, res)) return;
 
     const id = decodeURIComponent(
-      pathname.substring("/api/staff/reviews/".length)
+      pathname.substring(
+        "/api/staff/reviews/".length
+      )
     );
 
-    const index = reviews.findIndex(review => review.id === id);
+    const index = reviews.findIndex(
+      review => review.id === id
+    );
 
     if (index === -1) {
       return send(res, 404, {
@@ -342,7 +411,10 @@ async function handleRequest(req, res) {
 
     if (req.method === "DELETE") {
       reviews.splice(index, 1);
-      return send(res, 200, { ok: true });
+
+      return send(res, 200, {
+        ok: true
+      });
     }
 
     try {
@@ -356,6 +428,7 @@ async function handleRequest(req, res) {
         ok: true,
         review: reviews[index]
       });
+
     } catch {
       return send(res, 400, {
         error: "Invalid request"
@@ -381,5 +454,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Smart Eco Campus server running on port ${PORT}`);
+  console.log(
+    `Smart Eco Campus server running on port ${PORT}`
+  );
 });
