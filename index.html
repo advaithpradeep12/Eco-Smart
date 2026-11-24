@@ -320,15 +320,15 @@
        </article>
        <article class="panel p-5">
         <h2 data-template-id="uniform-review-title" class="canva-text card-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 23px;">AI uniform analysis</h2>
-        <p class="text-sm muted mb-4">Uniform analysis starts automatically whenever you upload or capture an image. While the camera is running, frames are checked automatically at intervals using your configured Roboflow workflow. A face-excluded copy is added to the staff review queue. Staff must verify every result.</p>
+        <p class="text-sm muted mb-4">Upload or capture an image to check the uniform. When the camera is active, the system also checks frames automatically. Each completed check is added to the staff review queue so staff can confirm the result.</p>
         <div id="uniform-result" class="mt-4 p-4 rounded-xl bg-[#edf4e9] text-sm" role="status" aria-live="polite" style="white-space:pre-line">Start the camera or upload an image. Uniform analysis will begin automatically.</div>
-        <p class="notice mt-4 text-sm">Automated visual screening uses the configured Roboflow workflow. Camera angle, lighting, occlusion, and uniform variations can affect accuracy. Staff must verify every result; this tool does not identify students.</p>
+        <p class="notice mt-4 text-sm">AI results are recommendations for staff review, not final decisions. Staff should check the uniform requirements and confirm any reported issue before taking action.</p>
        </article>
       </div>
       <article class="panel p-5">
-       <h2 data-template-id="queue-title" class="canva-text card-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 23px;">Staff review queue · browser-local prototype</h2>
+       <h2 data-template-id="queue-title" class="canva-text card-title" style="color: rgb(23, 52, 46); font-weight: 600; font-style: normal; font-size: 23px;">Staff review queue · all completed checks</h2>
        <div id="review-list" class="space-y-2"></div>
-       <p id="review-empty" class="text-sm muted">No items awaiting staff review.</p>
+       <p id="review-empty" class="text-sm muted">No completed uniform checks are waiting for staff review.</p>
       </article>
      </section>
      <section id="teacher" class="view space-y-5" hidden="" aria-labelledby="teacher-title">
@@ -664,10 +664,9 @@
     const host=$('review-list');host.replaceChildren();$('review-empty').classList.toggle('hidden',state.reviews.length>0);
     state.reviews.forEach(r=>{
       const row=document.createElement('div');row.className='rounded-xl border border-[#dce7d6] p-3 flex flex-wrap gap-3 items-center';
-      const image=document.createElement('img');image.src=r.url;image.alt='Face-excluded uniform review crop';image.className='w-24 h-24 object-cover rounded-lg border border-[#dce7d6]';
       const info=document.createElement('p');info.className='flex-1 text-sm min-w-[210px]';info.textContent=`Staff review · ${r.outcome} · ${r.time.toLocaleString()} · ${r.source||'Uploaded/captured image'}`;
       const del=document.createElement('button');del.type='button';del.className='btn secondary';del.textContent='Delete';del.addEventListener('click',()=>{state.reviews=state.reviews.filter(x=>x.id!==r.id);renderReviews()});
-      row.append(image,info,del);host.append(row);
+      row.append(info,del);host.append(row);
     });
   }
   // Roboflow Uniform Checker
@@ -756,8 +755,7 @@
       $('uniform-result').textContent =
         `Roboflow workflow response:\n${readable}\n\nPlease have a staff member verify the result before taking action.`;
 
-      // Keep a face-excluded copy in the existing staff review queue.
-      const privacyCrop = await makePrivacyCrop(source);
+      // Store review metadata only; do not retain the uploaded student image in this queue.
       const isIncorrect = /incorrect|missing|not[_ -]?wearing|non[_ -]?compliant/i.test(rawText);
       if (isIncorrect) {
         state.uniformWrong++;
@@ -765,16 +763,15 @@
       }
       state.reviews.unshift({
         id: Math.random().toString(36).slice(2),
-        url: privacyCrop,
         time: new Date(),
-        outcome: isIncorrect ? 'Roboflow flagged · staff verification required' : 'Roboflow result · staff verification required',
+        outcome: isIncorrect ? 'Possible uniform issue flagged · staff review required' : 'Check completed · staff review required',
         source: opts.live ? 'Automatic live-camera scan' : 'Uploaded/captured image'
       });
       state.reviews = state.reviews.slice(0, 30);
       renderReviews();
       $('camera-status').textContent = opts.live
-        ? 'Live Roboflow check complete · result added to staff review queue.'
-        : 'Roboflow check complete · privacy-cropped image added to staff review queue.';
+        ? 'Live Roboflow check complete · added to staff review queue.'
+        : 'Roboflow check complete · added to staff review queue.';
     } catch (error) {
       console.error('Roboflow uniform check error:', error);
       $('uniform-result').textContent = `Uniform check could not run: ${error.message || 'Unknown error'}\nCheck the API key, internet connection, and Roboflow workflow configuration, then try again.`;
