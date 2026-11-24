@@ -751,126 +751,33 @@
     return data;
   }
 
-
-async function analyzeUniform(source, opts = {}) {
-  if (!source || state.uniformAnalyzing) return;
-
-  state.uniformAnalyzing = true;
-
-  try {
-    $('uniform-result').textContent = 'Fetching data…';
-
-    const image = await imageInputForCheck(source);
-
-    const response = await fetch(UNIFORM_CHECK_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        inputs: { image }
-      })
-    });
-
-    // Read the response so we can show the real server error.
-    const responseText = await response.text();
-
-    let result = {};
-
+  async function analyzeUniform(source, opts = {}) {
+    if (!source || state.uniformAnalyzing) return;
+    state.uniformAnalyzing = true;
     try {
-      result = responseText ? JSON.parse(responseText) : {};
-    } catch {
-      throw new Error(
-        `Server returned an invalid response (HTTP ${response.status}).`
-      );
-    }
+      $('uniform-result').textContent = 'Fetching data…';
+      const image = await imageInputForCheck(source);
+      const response = await fetch(UNIFORM_CHECK_ENDPOINT, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs: { image } })
+      });
 
-    if (!response.ok) {
-      throw new Error(
-        result.error ||
-        result.message ||
-        `Uniform check failed (HTTP ${response.status}).`
-      );
-    }
-
-    const verdict = classifyUniform(result);
-
-    if (verdict.correct) {
-      $('uniform-result').textContent =
-        'Correct uniform — have a nice day!';
-
-      $('camera-status').textContent =
-        'Uniform check complete.';
-
-      lastLiveAlertKey = '';
-
-    } else {
-      const missingText = verdict.missing
-        .map(x => x.charAt(0).toUpperCase() + x.slice(1))
-        .join(', ');
-
-      if (!opts.live || !lastLiveAlertKey) {
-        try {
-          await sendStaffReview(
-            source,
-            verdict.missing,
-            verdict.labels
-          );
-
-          $('uniform-result').textContent =
-            `Incorrect uniform — missing: ${missingText}. One frame has been sent to staff for checking.`;
-
-          $('camera-status').textContent =
-            'Incorrect uniform detected. One frame sent for staff review.';
-
-          if (opts.live) {
-            lastLiveAlertKey = 'sent';
-          }
-
-        } catch (queueError) {
-          console.error('Staff review error:', queueError);
-
-          $('uniform-result').textContent =
-            `Incorrect uniform — missing: ${missingText}. The frame could not be sent to staff.`;
-
-          $('camera-status').textContent =
-            'Staff review submission failed.';
-        }
-
-      } else {
-        $('uniform-result').textContent =
-          `Incorrect uniform — missing: ${missingText}. This issue has already been sent to staff.`;
+      // Read the response body once so the actual server error is visible.
+      const responseText = await response.text();
+      let result = {};
+      try {
+        result = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(`Server returned an invalid response (HTTP ${response.status}).`);
       }
-
-      state.uniformWrong++;
-
-      if ($('dash-uniform-stat')) {
-        $('dash-uniform-stat').textContent =
-          `${state.uniformWrong} incorrect`;
+      if (!response.ok) {
+        throw new Error(result.error || result.message || `Uniform check failed (HTTP ${response.status}).`);
       }
-    }
-
-  } catch (error) {
-    console.error('UNIFORM CHECK ERROR:', error);
-
-    $('uniform-result').textContent =
-      `Uniform check error: ${error.message}`;
-
-    $('camera-status').textContent =
-      'Uniform check failed. Check the error message.';
-      
-  } finally {
-    state.uniformAnalyzing = false;
-  }
-}
-
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error('The uniform check could not be completed. Please try again.');
 
       const verdict = classifyUniform(result);
       if (verdict.correct) {
         $('uniform-result').textContent = 'Correct uniform — have a nice day!';
-        $('camera-status').textContent = opts.live ? 'Uniform check complete.' : 'Uniform check complete.';
+        $('camera-status').textContent = 'Uniform check complete.';
         lastLiveAlertKey = '';
       } else {
         const missingText = verdict.missing.map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(', ');
@@ -881,7 +788,8 @@ async function analyzeUniform(source, opts = {}) {
             $('camera-status').textContent = 'Incorrect uniform detected. One frame sent for staff review.';
             if (opts.live) lastLiveAlertKey = 'sent';
           } catch (queueError) {
-            $('uniform-result').textContent = `Incorrect uniform — missing: ${missingText}. The frame could not be sent to staff. Please contact the site administrator.`;
+            console.error('Staff review submission error:', queueError);
+            $('uniform-result').textContent = `Incorrect uniform — missing: ${missingText}. The frame could not be sent to staff.`;
             $('camera-status').textContent = 'Staff review submission failed.';
           }
         } else {
@@ -891,8 +799,9 @@ async function analyzeUniform(source, opts = {}) {
         if ($('dash-uniform-stat')) $('dash-uniform-stat').textContent = `${state.uniformWrong} incorrect`;
       }
     } catch (error) {
-      $('uniform-result').textContent = 'The uniform check could not be completed. Please check the connection and try again.';
-      $('camera-status').textContent = 'Unable to complete the uniform check.';
+      console.error('UNIFORM CHECK ERROR:', error);
+      $('uniform-result').textContent = `Uniform check error: ${error.message || 'Unknown error'}`;
+      $('camera-status').textContent = 'Uniform check failed. Check the error message.';
     } finally {
       state.uniformAnalyzing = false;
     }
